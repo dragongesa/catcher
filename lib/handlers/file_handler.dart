@@ -1,26 +1,17 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:catcher/model/platform_type.dart';
-import 'package:catcher/model/report.dart';
-import 'package:catcher/model/report_handler.dart';
+import 'package:catcher_2/model/platform_type.dart';
+import 'package:catcher_2/model/report.dart';
+import 'package:catcher_2/model/report_handler.dart';
 import 'package:flutter/material.dart';
 
+typedef FileSupplier = File Function(Report);
+
 class FileHandler extends ReportHandler {
-  final File file;
-  final bool enableDeviceParameters;
-  final bool enableApplicationParameters;
-  final bool enableStackTrace;
-  final bool enableCustomParameters;
-  final bool printLogs;
-  final bool handleWhenRejected;
-
-  late IOSink _sink;
-  bool _fileValidated = false;
-  bool _fileValidationResult = false;
-
   FileHandler(
     this.file, {
+    this.fileSupplier,
     this.enableDeviceParameters = true,
     this.enableApplicationParameters = true,
     this.enableStackTrace = true,
@@ -29,8 +20,27 @@ class FileHandler extends ReportHandler {
     this.handleWhenRejected = false,
   });
 
+  /// A file that should be written to. Is overwritten by [fileSupplier].
+  final File file;
+
+  /// Function that returns a file that should be written to. If this is set,
+  /// [file] has no effect.
+  final FileSupplier? fileSupplier;
+  final bool enableDeviceParameters;
+  final bool enableApplicationParameters;
+  final bool enableStackTrace;
+  final bool enableCustomParameters;
+  final bool printLogs;
+  final bool handleWhenRejected;
+
+  File? _openedFile;
+  IOSink? _sink;
+  bool _fileValidated = false;
+  bool _fileValidationResult = false;
+
   @override
   Future<bool> handle(Report report, BuildContext? context) async {
+    _openedFile = fileSupplier != null ? fileSupplier!(report) : file;
     try {
       if (!_fileValidated) {
         _fileValidationResult = await _checkFile();
@@ -38,7 +48,7 @@ class FileHandler extends ReportHandler {
       }
       return await _processReport(report);
     } catch (exc, stackTrace) {
-      _printLog("Exception occurred: $exc stack: $stackTrace");
+      _printLog('Exception occurred: $exc stack: $stackTrace');
       return false;
     }
   }
@@ -46,7 +56,7 @@ class FileHandler extends ReportHandler {
   Future<bool> _processReport(Report report) async {
     if (_fileValidationResult) {
       await _openFile();
-      _writeReportToFile(report);
+      await _writeReportToFile(report);
       await _closeFile();
       return true;
     } else {
@@ -55,87 +65,95 @@ class FileHandler extends ReportHandler {
   }
 
   Future<bool> _checkFile() async {
+    if (_openedFile == null) {
+      return false;
+    }
     try {
-      final bool exists = await file.exists();
+      final exists = _openedFile!.existsSync();
       if (!exists) {
-        file.createSync();
+        _openedFile!.createSync();
       }
-      final IOSink sink = file.openWrite(mode: FileMode.append);
-      sink.write("");
+      final sink = _openedFile!.openWrite(mode: FileMode.append)..write('');
       await sink.flush();
       await sink.close();
       return true;
     } catch (exc, stackTrace) {
-      _printLog("Exception occurred: $exc stack: $stackTrace");
+      _printLog('Exception occurred: $exc stack: $stackTrace');
       return false;
     }
   }
 
-  Future _openFile() async {
-    _sink = file.openWrite(mode: FileMode.append);
-    _printLog("Opened file");
+  Future<void> _openFile() async {
+    if (_openedFile == null) {
+      _printLog('Could not open file');
+      return;
+    }
+    _sink = _openedFile!.openWrite(mode: FileMode.append);
+    _printLog('Opened file');
   }
 
   void _writeLineToFile(String text) {
-    _sink.add(utf8.encode('$text\n'));
+    _sink?.add(utf8.encode('$text\n'));
   }
 
-  Future _closeFile() async {
-    await _sink.flush();
-    await _sink.close();
-    _printLog("Closed file");
+  Future<void> _closeFile() async {
+    await _sink?.flush();
+    await _sink?.close();
+    _printLog('Closed file');
   }
 
-  void _writeReportToFile(Report report) async {
-    _printLog("Writing report to file");
+  Future<void> _writeReportToFile(Report report) async {
+    _printLog('Writing report to file');
     _writeLineToFile(
-      "============================== CATCHER LOG ==============================",
+      '============================== '
+      'CATCHER 2 LOG '
+      '==============================',
     );
-    _writeLineToFile("Crash occurred on ${report.dateTime}");
-    _writeLineToFile("");
+    _writeLineToFile('Crash occurred on ${report.dateTime}');
+    _writeLineToFile('');
     if (enableDeviceParameters) {
       _logDeviceParametersFormatted(report.deviceParameters);
-      _writeLineToFile("");
+      _writeLineToFile('');
     }
     if (enableApplicationParameters) {
       _logApplicationParametersFormatted(report.applicationParameters);
-      _writeLineToFile("");
+      _writeLineToFile('');
     }
-    _writeLineToFile("---------- ERROR ----------");
-    _writeLineToFile("${report.error}");
-    _writeLineToFile("");
+    _writeLineToFile('---------- ERROR ----------');
+    _writeLineToFile('${report.error}');
+    _writeLineToFile('');
     if (enableStackTrace) {
-      _writeLineToFile("------- STACK TRACE -------");
-      _writeLineToFile("${report.stackTrace}");
+      _writeLineToFile('------- STACK TRACE -------');
+      _writeLineToFile('${report.stackTrace}');
     }
     if (enableCustomParameters) {
       _logCustomParametersFormatted(report.customParameters);
     }
     _writeLineToFile(
-      "======================================================================",
+      '======================================================================',
     );
   }
 
   void _logDeviceParametersFormatted(Map<String, dynamic> deviceParameters) {
-    _writeLineToFile("------- DEVICE INFO -------");
+    _writeLineToFile('------- DEVICE INFO -------');
     for (final entry in deviceParameters.entries) {
-      _writeLineToFile("${entry.key}: ${entry.value}");
+      _writeLineToFile('${entry.key}: ${entry.value}');
     }
   }
 
   void _logApplicationParametersFormatted(
     Map<String, dynamic> applicationParameters,
   ) {
-    _writeLineToFile("------- APP INFO -------");
+    _writeLineToFile('------- APP INFO -------');
     for (final entry in applicationParameters.entries) {
-      _writeLineToFile("${entry.key}: ${entry.value}");
+      _writeLineToFile('${entry.key}: ${entry.value}');
     }
   }
 
   void _logCustomParametersFormatted(Map<String, dynamic> customParameters) {
-    _writeLineToFile("------- CUSTOM INFO -------");
+    _writeLineToFile('------- CUSTOM INFO -------');
     for (final entry in customParameters.entries) {
-      _writeLineToFile("${entry.key}: ${entry.value}");
+      _writeLineToFile('${entry.key}: ${entry.value}');
     }
   }
 
@@ -155,7 +173,5 @@ class FileHandler extends ReportHandler {
       ];
 
   @override
-  bool shouldHandleWhenRejected() {
-    return handleWhenRejected;
-  }
+  bool shouldHandleWhenRejected() => handleWhenRejected;
 }
